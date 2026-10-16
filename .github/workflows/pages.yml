@@ -1,14 +1,4 @@
-# Publishes the browser-only demo to GitHub Pages: https://duartesantos8.github.io/openGym/
-#
-# Dormant from 2026-08-19 to 2026-09-10 while the GitHub account was suspended; live again since.
-# The same build (same command, Vite's base is './') is also served from the project's own site at
-# https://opengym.ch/demo/, so the demo has two addresses with identical content.
-#
-# Pages serves static files only, so this build has no backend — VITE_DEMO=1 makes the app
-# boot straight into guest mode with a seeded example history (see frontend/src/lib/demo.js).
-# The exercise stills and animations (180 px) come from catalogue/media and are staged next to
-# the build by scripts/catalogue/stage-media.mjs, so the demo serves them from its own origin.
-name: Deploy demo to GitHub Pages
+name: Deploy personal OpenGym
 
 on:
   push:
@@ -34,20 +24,50 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
       - run: npm ci
         working-directory: frontend
+
+      - name: Prepare personal local mode
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs'
+          const file = 'frontend/src/store/useStore.js'
+          let source = readFileSync(file, 'utf8')
+          const changes = [
+            ['    async boot() {', "    async boot() {\n      if (import.meta.env.VITE_LOCAL_ONLY === '1') {\n        get().setGuest(true)\n        finishBoot()\n        return\n      }"],
+            ['  s.lang = detectedLang()', "  s.lang = import.meta.env.VITE_LOCAL_ONLY === '1' ? 'zh' : detectedLang()"],
+            ['  s.langAuto = true', "  s.langAuto = import.meta.env.VITE_LOCAL_ONLY !== '1'"]
+          ]
+          for (const [before, after] of changes) {
+            if (source.split(before).length !== 2) throw new Error('Source changed; check: ' + before)
+            source = source.replace(before, after)
+          }
+          writeFileSync(file, source)
+          for (const path of [file, 'frontend/src/lib/media-sync.js', 'frontend/index.html']) {
+            writeFileSync(path, readFileSync(path, 'utf8').replaceAll('gym_state_v1', 'gym_personal_state_v1'))
+          }
+          const page = 'frontend/index.html'
+          const loading = '<div id="root"><p id="startup" style="color:#eee;text-align:center;padding:40vh 20px;font-family:system-ui">正在打开 OpenGym…</p></div><script>setTimeout(function(){var e=document.getElementById("startup");if(e){e.textContent="页面暂时无法加载，请检查网络后刷新重试。"}},20000)</script>'
+          writeFileSync(page, readFileSync(page, 'utf8').replace('<div id="root"></div>', loading))
+          NODE
+
       - run: npm run build
         working-directory: frontend
         env:
-          VITE_DEMO: '1'
-      # The 180 px stills and animations from catalogue/media, served next to the demo
+          VITE_DEMO: '0'
+          VITE_LOCAL_ONLY: '1'
+
       - run: node scripts/catalogue/stage-media.mjs frontend/dist
+
       - uses: actions/configure-pages@v6
+
       - uses: actions/upload-pages-artifact@v5
         with:
           path: frontend/dist
@@ -61,3 +81,5 @@ jobs:
     steps:
       - id: deploy
         uses: actions/deploy-pages@v5
+
+      
